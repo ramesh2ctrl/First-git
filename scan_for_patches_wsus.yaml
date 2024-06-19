@@ -1,0 +1,90 @@
+---
+- name: Set Return code job properties and credentials validation
+  hosts: localhost
+  tasks:
+    - name: Set return code job properties
+      include_role:
+        name: returncode
+        tasks_from: set_job_properties
+      vars:
+        asset_name: "WSUS Patch Scan"
+        documentation:
+          default: "https://github.com/ramesh2ctrl/Continuous-Engineering/ansible_collection_patching_windows_wsus"
+
+    - name: Machine credential validation
+      block:
+        - name: Set API call variables
+          set_fact:
+            tower_user: "{{ lookup('env','TOWER_USERNAME') }}"
+            tower_pass: "{{ lookup('env','TOWER_PASSWORD') }}"
+          no_log: true
+          register: Tower_cred
+          failed_when:
+            - tower_user|length < 1
+            - tower_pass|length < 1
+
+      rescue:
+        - name: Validate Input Parameters
+          include_role:
+            name: returncode
+          vars:
+            rc_support: "account"
+            rc_group: "misconfiguration"
+            rc_number: 301
+            rc_message: "Tower Credentials not provided in Job Template"
+
+        - name: set cancel_execution to true
+          set_fact:
+            cancel_execution: true
+
+
+- name: Prepare execution-generic environment
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Prepare for upload to SFS
+      include_role:
+        name: sfs_upload
+      vars:
+        sfs_upload_stage: "prepare"
+        output_dir: "{{ results_dir_base |
+          default('/tmp/gts-ansible/patchscan') }}"
+        Tower_cred_test: "{{ hostvars['localhost'].Tower_cred }}"
+      when: not ( Tower_cred_test.failed | bool )
+
+# **** Setting Socket tunnel ****
+    - include_role:
+        name: event-socks-tunnel
+      vars:
+        acc_id: "{{ hostvars['localhost']['org'] }}"
+        transaction_id: "{{ tower_job_id }}"
+        Tower_cred_test: "{{ hostvars['localhost'].Tower_cred }}"
+      when:
+        - jh1_ip is defined  # only if endpoint is behind a jumphost
+        - not ( Tower_cred_test.failed | bool )
+
+
+- hosts: all
+  gather_facts: false
+  tasks:
+    - include_role:
+        name: Ansible-Role-WSUS-Scan
+      vars:
+        dir: "{{ hostvars['localhost'].base_dir }}"
+        account_code: "{{ hostvars['localhost']['org'] }}"
+        trans_num: "{{ tower_job_id }}"
+        Tower_cred_test: "{{ hostvars['localhost'].Tower_cred }}"
+      when: not ( Tower_cred_test.failed | bool )
+
+- name: Report overall execution outcome and run extra processing of scan result
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - include_role:
+        name: sfs_upload
+      vars:
+        sfs_upload_stage: "upload"
+        Tower_cred_test: "{{ hostvars['localhost'].Tower_cred }}"
+      when: not ( Tower_cred_test.failed | bool )

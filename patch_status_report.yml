@@ -1,0 +1,284 @@
+---
+- name: Patch Status Report
+  hosts: localhost
+  connection: local
+  strategy: free
+  gather_facts: false
+  ignore_unreachable: true
+  become: false
+
+# **** Prepare SFS ****
+- name: SFS *Prepare execution-generic environment*
+  tags: sfs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Prepare for upload to SFS
+      include_role:
+        name: ansible_role_sfs_upload
+      vars:
+        sfs_upload_stage: "prepare"
+        output_dir: "{{ results_dir_base |
+          default('/tmp/gts-ansible/patchscan') }}"
+
+# **** Setting Socket tunnel ****
+- name: Role ensures that the socks tunnel is setup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - include_role:
+        name: event-socks-tunnel
+      vars:
+        acc_id: "{{ blueid_shortcode }}"
+        transaction_id: "{{ tower_job_id }}"
+      when: jh1_ip is defined  # only if endpoint is behind a jumphost
+
+- hosts: all
+  gather_facts: true
+  strategy: free
+  ignore_unreachable: true
+  vars:
+    - account_code: "{{ blueid_shortcode }}"
+    - trans_num: "{{ tower_job_id }}"
+    - acc_id: "{{ blueid_shortcode }}"
+    - transaction_id: "{{ tower_job_id }}"
+    - supported_family: "{{ ansible_os_family == 'Windows'}}"
+    - supported_version: "{{('2019' in ansible_os_name) or ('2016' in ansible_os_name) or ('2012' in ansible_os_name) or ('2008' in ansible_os_name)}}"
+    - dir: "{{ hostvars['localhost'].base_dir }}"
+    - patch_running_status: "{{ dir }}/patch_running_status.csv"
+    - patch_notstarted_report: "{{ dir }}/patch_notstarted_report.csv"
+    - patch_notstarted_report_secondattempt: "{{ dir }}/patch_notstarted_report_secondattempt.csv"
+    - patch_complete_report: "{{ dir }}/patch_complete_report.csv"
+    - patch_detailed_report: "{{ dir }}/patch_detailed_report.csv"
+  tasks:
+    - name: "Initialize new output file - patch running status report"
+      lineinfile:
+        path: "{{ patch_running_status }}"
+        line: |
+          "Hostname,Install_Status"
+        create: true
+      delegate_to: localhost
+
+    - name: "Initialize new output file - patch detailed report"
+      lineinfile:
+        path: "{{ patch_detailed_report }}"
+        line: |
+          "Hostname,KBnumber,Installstatus,rebootstatus"
+        create: true
+      delegate_to: localhost
+
+    - name: "Initialize new output file - patch complete report"
+      lineinfile:
+        path: "{{ patch_complete_report }}"
+        line: |
+          "Hostname,Install_Status"
+        create: true
+      delegate_to: localhost
+
+    - name: "Initialize new output file - patch notstarted report"
+      lineinfile:
+        path: "{{ patch_notstarted_report }}"
+        line: |
+          "Hostname,Comments"
+        create: true
+      delegate_to: localhost
+
+    - name: "Initialize new output file - patch notstarted secondattempt report"
+      lineinfile:
+        path: "{{ patch_notstarted_report_secondattempt }}"
+        line: |
+          "Hostname,Comments"
+        create: true
+      delegate_to: localhost
+
+    - name: "Check if file exists - firstattempt.txt"
+      win_stat:
+        path: c:\windows\temp\WSUSPatch\firstattempt.txt
+      register: first_file_exists
+
+    - name: "Check if file exists - secondattempt.txt"
+      win_stat:
+        path: c:\windows\temp\WSUSPatch\secondattempt.txt
+      register: second_file_exists
+
+    - name: "If exists, read and write content from firstattempt.txt"
+      block:
+        - name: get content of log file
+          win_shell: Get-Content 'c:\windows\temp\WSUSPatch\firstattempt.txt'
+          register: frist_file_content
+
+        - name: extract frist line
+          set_fact:
+            extract1: "{{ frist_file_content.stdout_lines | regex_replace('.*Return value:.*?({.*?)\\d+-\\d+-\\d+ \\d+:\\d+:\\d+Z Native job completed with output.*', '\\1') | replace(' ','') }}"
+          ignore_errors: true
+
+        - name: extract second line
+          set_fact:
+            extract2: "{{ extract1 | regex_replace('.*?({.*}).*', '\\1') | trim }}"
+          ignore_errors: true
+
+        - name: copy values to files
+          copy:
+            content: "{{ extract2 }}"
+            dest: "./{{ ansible_hostname }}_var.yml"
+          delegate_to: localhost
+          become: false
+          ignore_errors: true
+
+        - name: replace values
+          replace:
+            path: "./{{ ansible_hostname }}_var.yml"
+            regexp: "',u'"
+            replace: ""
+          delegate_to: localhost
+          become: false
+          ignore_errors: true
+
+        - name: load values
+          include_vars:
+            file: "./{{ ansible_hostname }}_var.yml"
+            name: extract3
+          ignore_errors: true
+#        - name: Write frist attempt installation detailed status
+#          lineinfile:
+#            path: "{{ patch_detailed_report }}"
+#            line: |
+#               ansible_hostname, "{{ 'KB' + extract3['updates'][item]['kb'] | string | regex_replace('.*?(\\d+).*','\\1') | regex_replace('[','') | regex_replace(']','') | regex_replce('\'','') }}" ,  "{{ extract3['updates'][item]['installed'] | string }}" , "{{ extract3['reboot_required'] | string }}"
+#          with_items: "{{ extract3['updates'] }}"
+#          delegate_to: localhost
+#          become: no
+#            delegate_to: localhost
+#            become: no
+#          win_shell: Get-Content "c:\windows\temp\WSUSPatch\var.yml" | convertto-json
+#          register: extract3
+#        - name: set empty final
+#          set_fact:
+#           final_out: ''
+
+        - name: set final output
+          set_fact:
+            final_out: "{{ final_out | default('') + '\n'  + ansible_hostname + ', ' + 'KB' + extract3['updates'][item]['kb'] | string | regex_replace('.*?(\\d+).*','\\1')  +  ', ' + extract3['updates'][item]['installed'] | string + ', ' + extract3['reboot_required'] | string }}"
+          with_items: "{{ extract3['updates'] }}"
+          delegate_to: localhost
+          become: false
+          ignore_errors: true
+        - name: Write frist attempt installation detailed status
+          lineinfile:
+            path: "{{ patch_detailed_report }}"
+            line: |
+               "{{ final_out | trim }}"
+#          with_items: "{{ extract3['updates'] }}"
+          delegate_to: localhost
+          ignore_errors: true
+#          become: no
+        - name: remove var files from tower server
+          file:
+            path: "./{{ ansible_hostname }}_var.yml"
+            state: absent
+          delegate_to: localhost
+          ignore_errors: true
+
+#        - debug:
+#           var: final_out
+#          delegate_to: localhost
+#          become: no
+
+        - name: Write frist attempt installation status
+          lineinfile:
+            path: "{{ patch_running_status }}"
+            line: |
+              "{{ ansible_hostname }},installation in progress"
+          delegate_to: localhost
+          become: false
+          when: frist_file_content.stdout is search('Installing') and not frist_file_content.stdout is search('FATAL') and not frist_file_content.stdout is search('HRESULT') and not frist_file_content.stdout is search('completed')
+
+        - name: Write frist attempt installation status - failed and fatal errors
+          lineinfile:
+            path: "{{ patch_running_status }}"
+            line: |
+              "{{ ansible_hostname }},installation is failed (or) fatal errors occured"
+          delegate_to: localhost
+          become: false
+          when: frist_file_content.stdout is search('FATAL') or frist_file_content.stdout is search('HRESULT')
+
+        - name: Write frist attempt installation completed status
+          lineinfile:
+            path: "{{ patch_complete_report }}"
+            line: |
+              "{{ ansible_hostname }},patching is completed"
+          delegate_to: localhost
+          become: false
+          when: frist_file_content.stdout is search('completed') and not frist_file_content.stdout is search('FATAL') and not frist_file_content.stdout is search('HRESULT')
+      when:
+        - first_file_exists.stat.exists
+
+    - name: "If exists, read and write content from secondattempt.txt"
+      block:
+        - name: Read second attempt installation status
+          win_shell: Get-Content 'c:\windows\temp\WSUSPatch\secondattempt.txt'
+          register: second_file_content
+
+        - name: Write second attempt installation status
+          lineinfile:
+            path: "{{ patch_running_status }}"
+            line: |
+              "{{ ansible_hostname }},installation in progress"
+          delegate_to: localhost
+          become: false
+          when: second_file_content.stdout is search('Installing')
+
+        - name: Write second attempt installation completed status
+          lineinfile:
+            path: "{{ patch_complete_report }}"
+            line: |
+              "{{ ansible_hostname }},patching is completed"
+          delegate_to: localhost
+          become: false
+          when: second_file_content.stdout is search('completed')
+
+      when:
+        - second_file_exists.stat.exists
+    - name: print csv files - status
+      shell: cat "{{ patch_running_status }}"
+      delegate_to: localhost
+      become: false
+    - name: print csv files-completed
+      shell: cat "{{ patch_complete_report }}"
+      delegate_to: localhost
+      become: false
+
+    - name: "If NOT found - firstattempt.txt"
+      lineinfile:
+        path: "{{ patch_notstarted_report }}"
+        line: |
+          "{{ ansible_hostname }},NOT Found - c:\windows\temp\WSUSPatch\firstattempt.txt"
+      delegate_to: localhost
+      become: false
+      when:
+        - not(first_file_exists.stat.exists)
+
+    - name: "If NOT found - secondattempt.txt"
+      lineinfile:
+        path: "{{ patch_notstarted_report_secondattempt }}"
+        line: |
+          "{{ ansible_hostname }},NOT Found - c:\windows\temp\WSUSPatch\secondattempt.txt"
+      delegate_to: localhost
+      become: false
+      when:
+        - not(second_file_exists.stat.exists)
+
+# **** Process files and Upload to SFS ****
+- name: SFS Upload
+  tags: sfs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - include_role:
+        name: ansible_role_sfs_upload
+      vars:
+        sfs_upload_stage: "upload"
+        output_file_name: "patch_status_report_{{ timestamp }}.zip"

@@ -1,0 +1,30 @@
+---
+# Defines the stage of the wrapper to be executed.
+#   "prepare" = prepare temporary folders for data on Tower host;
+#   "upload"  = upload data from Tower to SFS, then if successful -
+#               cleanup temporary folders and data from Tower.
+# Default = "prepare"
+sfs_upload_stage: "prepare"
+
+# Explicitly define if uploaded compressed data should be
+# unpacked by SFS upon upload and stored in SFS vault in original
+# uncompressed state.
+# Default = undefined (upload to SFS will use SFS server generic configuration)
+# unpack_on_sfs: false
+
+# (password|token) Defines an authentication method to use when
+# accessing Tower and SFS APIs via HTTPS
+# Default = "password"
+api_auth_by: "password"
+
+# Other variables
+upload_url: ""
+output_dir: "/tmp/gts-ansible/generic"
+upload_results: true
+merge_results: false
+output_file_name: "{{ timestamp }}.zip"
+upload_url_subfolder: ""
+merge_filenames_regex: "\\.(txt|csv)$"
+merged_file_name: "merged_file_{{ timestamp }}.txt"
+merged_file_separator_text: ""
+force_temp_folder_cleanup: true

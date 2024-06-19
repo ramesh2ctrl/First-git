@@ -1,0 +1,112 @@
+---
+- name: Block for return code
+  block:
+    - name: Safeguarded block to remove temporary folder on Tower
+      block:
+        - name: Show folder path on Tower for data to be uploaded
+          stat:
+            path: "{{ base_dir }}"
+          register: base_dir_result
+          failed_when: base_dir_result.stat.isdir is not defined or
+                       not base_dir_result.stat.isdir
+
+        - name: Merge raw contents from all data files
+          assemble:
+            src: "{{ base_dir }}"
+            dest: "{{ base_dir }}/{{ merged_file_name }}"
+            regexp: "{{ merge_filenames_regex }}"
+            delimiter: "{{ merged_file_separator_text }}"
+          when: merge_results | bool
+
+        - name: Upload data from Tower to SFS
+          vars:
+            unpack_url_suffix: "{{ '' if (unpack_on_sfs is undefined ) else (
+              '?explode=true' if (unpack_on_sfs | bool) else '?explode=false') }}"
+          block:
+            - name: Initialize variables needed for upload from Tower to SFS
+              set_fact:
+                output_file_fullpath: "{{ base_dir }}/{{ output_file_name }}"
+                upload_url_fullpath: "{{ upload_url }}/{{ org+'/'+project+'/'+
+                  upload_url_subfolder | trim | urlencode }}"
+
+            - name: Rename report zip file
+              shell: mv {{ base_dir }}/*.zip {{ base_dir }}/{{ output_file_name }}
+              register: rename_report_zip
+              failed_when: rename_report_zip.rc != 0
+
+            # URI module doesn't support sending data in multi-part format, use curl
+            - name: Upload compressed data from Tower to SFS
+              shell: "curl -k -s -S -F uploadFile=@'{{ output_file_fullpath }}' '{{
+                upload_url_fullpath+unpack_url_suffix }}' -w
+                \"HTTP_RC:%{http_code}\"{%
+                if api_auth_by == 'password' %} -u
+                \"$TOWER_USERNAME:$TOWER_PASSWORD\"{%
+                elif api_auth_by == 'token' %} -H
+                \"Authorization: Bearer $TOWER_PASSWORD\"{% endif %}"
+              args:
+                warn: false
+              register: response
+              changed_when: false
+              failed_when: response is undefined or response.rc != 0 or
+                (response.stdout |
+                regex_replace('^[\\s\\S]*HTTP_RC:([0-9]+)[\\s\\S]*$', '\\1') |
+                int) < 200 or
+                (response.stdout |
+                regex_replace('^[\\s\\S]*HTTP_RC:([0-9]+)[\\s\\S]*$', '\\1') |
+                int) >= 300
+#              ignore_errors: true
+
+            - name: Show location of data on SFS server upon successfull upload
+              debug:
+                msg: "{{ upload_url_fullpath }}/{{ output_file_name }}"
+              when: response is defined and not response.failed
+
+          when: upload_results | bool
+#  when: not (output_secure.exception)
+
+  rescue:
+    - name: Show folder path on Tower for data to be uploaded
+      include_role:
+        name: returncode
+      vars:
+        rc_number: 104
+        rc_support: "developer"
+        rc_group: "component_playbook"
+        rc_message: "upload data error. Directory not defined"
+      when: base_dir_result.stat.isdir is not defined or
+                   not base_dir_result.stat.isdir
+
+    - name: Rename report zip file
+      include_role:
+        name: returncode
+      vars:
+        rc_number: 105
+        rc_support: "developer"
+        rc_group: "component_playbook"
+        rc_message: "Report Zip folder rename failed"
+      when: rename_report_zip.rc != 0
+
+    - name: Upload compressed data from Tower to SFS
+      include_role:
+        name: returncode
+      vars:
+        rc_number: 106
+        rc_support: "developer"
+        rc_group: "component_playbook"
+        rc_message: "Upload compressed data from Tower to SFS failed"
+      when: response is undefined or response.rc != 0 or
+        (response.stdout |
+        regex_replace('^[\\s\\S]*HTTP_RC:([0-9]+)[\\s\\S]*$', '\\1') |
+        int) < 200 or
+        (response.stdout |
+        regex_replace('^[\\s\\S]*HTTP_RC:([0-9]+)[\\s\\S]*$', '\\1') |
+        int) >= 300
+#      ignore_errors: true
+
+  always:
+    - name: Clean up temporary data folder on Tower
+      file:
+        path: "{{ base_dir }}"
+        state: absent
+      when: (response is defined and not response.failed)
+        or (force_temp_folder_cleanup | bool)

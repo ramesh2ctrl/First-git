@@ -1,0 +1,10 @@
+---
+galaxy_info:
+  author: Ravi Kumar Puneti
+  description: "Ansible-Role-WSUS-Scan is sub role perform \n
+  actual scan via wsus_scan.ps1 script"
+  company: Kyndryl
+  license: Kyndryl Intellectual Property
+  min_ansible_version: 2.3
+  galaxy_tags: []
+dependencies: []

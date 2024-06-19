@@ -1,0 +1,4 @@
+# skipping 303 because ansible's uri module does not support multi-part format
+# our server requires for file uploads
+skip_list:
+ - '303'

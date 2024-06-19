@@ -1,0 +1,22 @@
+---
+namespace: continuous_engineering
+name: ansible_collection_patching_windows_wsus
+version: 1.0.1
+readme: README.md
+authors:
+- Ramesh <Ramesh2azure@gmail.com>
+
+description: The role detects patch and generate status reports on WSUS target group servers
+# license:RameshTechnologies Intellectual Property
+license_file: LICENSE.md
+tags:
+- patching
+- windows
+- cacm
+- securitypatchmanagement
+- wsus
+- automation
+- ansible
+- productionready
+- clientdeployable
+dependencies: {}

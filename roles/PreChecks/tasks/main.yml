@@ -1,0 +1,11 @@
+---
+# Running Pre-Checks tasks, Taking service snapshot, stopping IIS and shutting down DB subsystem components properly
+# Dhananjaya KS
+
+- name: Running pre tasks block
+  block:
+    - name: Taking Services snapshot
+      win_shell: Get-WmiObject -Class win32_service | where {$_.state -ne 'Running' } | Export-Clixml -Path "C:\windows\temp\WSUSPatch\$env:Computername-Before.xml" -Force
+      register: services
+    - name: Calling for restart
+      include: ../../reboot.yml

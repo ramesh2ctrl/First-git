@@ -1,0 +1,44 @@
+---
+- name: Checking server require to reboot before patch installation
+  debug:
+    var: wsusupdates.reboot_required
+  when: wsusupdates.reboot_required is defined and reboot | bool
+- block:
+    - name: Searching updtes
+      win_updates:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+          - UpdateRollups
+        state: searched
+      register: updates3
+    - name: Installing windows Patches after fixing WSUS.....
+      win_updates:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+          - UpdateRollups
+        state: installed
+        reboot: no
+        log_path: c:\windows\temp\WSUSPatch\secondattempt.txt
+      register: updates2
+  rescue:
+    - name: Removing Node from Maintenance Mode
+      win_file:
+        path: C:\MaintMode\system.mm
+        state: absent
+
+    - name: Update error tracker file
+      lineinfile:
+        path: "{{ wsus_error_tracker }}"
+        line: |
+          "{{ inventory_hostname }}, Failed to patch the endpoint"
+      delegate_to: localhost
+      become: false
+
+    - name: Unable to patch the server make sure  APPROVE THE PATCHES FROM WSUS CONSOLE
+      meta: end_host
+  always:
+    - name: Log informations
+      debug:
+        var: updates2

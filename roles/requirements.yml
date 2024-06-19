@@ -1,0 +1,24 @@
+---
+# global socks tunner role
+- name: event-socks-tunnel
+  scm: 'git'
+  src: >-
+    https://github.kyndryl.net/Continuous-Engineering/ansible-role-event-socks-tunnel.git
+  version: master
+
+- name: returncode
+  scm: 'git'
+  src: https://github.kyndryl.net/Continuous-Engineering/ansible_role_returncode
+  version: 1.2/main
+
+# sfs upload role
+- name: ansible_role_sfs_upload
+  scm: 'git'
+  src: https://github.kyndryl.net/Continuous-Engineering/ansible_role_sfs_upload.git
+  version: master
+
+# generic role for uploads to SFS
+#- name: sfs_upload
+#  src: https://github.kyndryl.net/Continuous-Engineering/ansible_role_sfs_upload.git
+#  scm: 'git'
+#  version: 1.2.0

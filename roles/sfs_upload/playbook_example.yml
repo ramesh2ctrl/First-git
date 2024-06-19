@@ -1,0 +1,10 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - include_role:
+        name: sfs_upload
+      vars:
+        sfs_upload_stage: "prepare"
+        output_dir: "/tmp/gts-ansible/patchscan"

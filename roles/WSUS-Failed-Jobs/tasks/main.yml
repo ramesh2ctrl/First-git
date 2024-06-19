@@ -1,0 +1,244 @@
+---
+# - block:
+- name: "Checking server require to  reboot before patch installation"
+  debug:
+   msg: SERVER REQUIRE RESTART BEFORE YOU INSTALLING FURTHER PATCHES HENCE FAILING THE TASKS
+
+- name: Ending playbook
+  meta: end_host
+  when: wsusupdates is defined and wsusupdates.reboot_required is defined and wsusupdates.reboot_required |bool and not reboot | bool
+
+- name: Server is require restart hence calling pre checks and post check function
+  include_role:
+   name: roles/PreChecks
+  when: wsusupdates is defined and wsusupdates.reboot_required is defined and wsusupdates.reboot_required |bool and  reboot | bool
+- name: running tasks
+  block:
+   - name: Set service startup mode to auto and ensure it is started
+     win_service:
+      name: wuauserv
+      start_mode: auto
+      state: started
+  rescue:
+   - name: Update error tracker file
+     lineinfile:
+     path: "{{ wsus_error_tracker }}"
+     line: >-
+       {{ inventory_hostname }}, "Unable to start the service or set it to auto mode"
+     delegate_to: localhost
+     become: false
+
+   - name: End play
+     meta: end_host
+
+- block:
+   - name: Stopping services
+     win_service:
+      name: "{{item}}"
+      state: stopped
+      force_dependent_services: true
+     with_items:
+      - wuauserv
+      - BITS
+  rescue:
+   - name: Update error tracker file
+     lineinfile:
+     path: "{{ wsus_error_tracker }}"
+     line: >-
+       {{ inventory_hostname }}, "Unable to stop the services"
+     delegate_to: localhost
+     become: false
+
+   - name: End play
+     meta: end_host
+
+- block:
+   - name: Remove old SoftwareDistribution
+     win_file:
+      path: c:\windows\SoftwareDistribution_old
+      state: absent
+  rescue:
+   - name: Update error tracker file
+     lineinfile:
+     path: "{{ wsus_error_tracker }}"
+     line: >-
+       {{ inventory_hostname }}, "Failed to remove - c:\windows\SoftwareDistribution_old "
+     delegate_to: localhost
+     become: false
+
+   - name: End play
+     meta: end_host
+
+- block:
+   - name: Ensure folder is exist Software distrubution folder
+     win_stat:
+      path: c:\windows\SoftwareDistribution
+     register: sdfolder
+  rescue:
+   - name: Update error tracker file
+     lineinfile:
+     path: "{{ wsus_error_tracker }}"
+     line: >-
+        {{ inventory_hostname }}, "Directory not found - c:\windows\SoftwareDistribution"
+     delegate_to: localhost
+     become: false
+
+   - name: End play
+     meta: end_host
+
+- block:
+   - name: renaming the Software distrubution folder
+     win_shell: ren SoftwareDistribution SoftwareDistribution_old
+     args:
+      executable: cmd
+      chdir: C:\Windows
+     register: SD
+     when: sdfolder is defined and  sdfolder.stat.exists == true
+  rescue:
+   - name: Update error tracker file
+     lineinfile:
+     path: "{{ wsus_error_tracker }}"
+     line: >-
+       {{ inventory_hostname }}, "Failed to rename the software distribution folder"
+     delegate_to: localhost
+     become: false
+
+   - name: End play
+     meta: end_host
+
+- block:
+   - name: Create AU for path for WindowsUpdate
+     win_regedit:
+      path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU
+  rescue:
+   - name: Update error tracker file
+     lineinfile:
+     path: "{{ wsus_error_tracker }}"
+     line: >-
+       {{ inventory_hostname }}, "Failed to create AU path for WindowsUpdate"
+     delegate_to: localhost
+     become: false
+
+   - name: End play
+     meta: end_host
+
+- block:
+   - name: Update WUServer details in server
+     win_regedit:
+      path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate
+      name: WUServer
+      data: "{{wsus_server}}"
+      type: string
+
+   - name: update WUStatusServer details in server
+     win_regedit:
+      path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate
+      name: WUStatusServer
+      data: "{{wsus_server}}"
+      type: string
+
+   - name: WSUS DetectionFrequencyEnabled setting
+     win_regedit:
+      path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU
+      name: DetectionFrequencyEnabled
+      data: 1
+      type: dword
+
+   - name: WSUS DetectionFrequency setting
+     win_regedit:
+      path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU
+      name: DetectionFrequency
+      data: 1
+      type: dword
+
+   - name: WSUS UseWUServer setting
+     win_regedit:
+      path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU
+      name: UseWUServer
+      data: 1
+      type: dword
+
+   - name: WSUS NoAutoUpdate setting
+     win_regedit:
+      path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU
+      name: NoAutoUpdate
+      data: 0
+      type: dword
+
+   - name: WSUS AUOptions setting
+     win_regedit:
+      path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU
+      name: AUOptions
+      data: 3
+      type: dword
+  rescue:
+   - name: Update error tracker file
+     lineinfile:
+     path: "{{ wsus_error_tracker }}"
+     line: >-
+       {{ inventory_hostname }}, "Failed to update WSUS details in registry"
+     delegate_to: localhost
+     become: false
+
+   - name: End play
+     meta: end_host
+
+- block:
+   - name: Starting service
+     win_service:
+      name: "{{item}}"
+      state: started
+      force_dependent_services: true
+     with_items:
+      - wuauserv
+      - BITS
+  rescue:
+   - name: Update error tracker file
+     lineinfile:
+     path: "{{ wsus_error_tracker }}"
+     line: >-
+       {{ inventory_hostname }}, "Failed to start services"
+     delegate_to: localhost
+     become: false
+
+   - name: End play
+     meta: end_host
+
+- block:
+   - name: reauthorizing and detecting WSUS console from .net
+     win_shell: |
+      $AutoUpdates = New-object -ComObject "Microsoft.update.AutoUpdate"
+      $AutoUpdates.detectNow()
+
+   - name: reauthorizing and detecting WSUS console
+     win_shell: wuauclt  /detectnow /reportnow
+     args:
+      executable: cmd
+      chdir: C:\Windows\system32
+     register: wsus_detect
+
+   - name: debug of wsus detect
+     debug:
+      var: wsus_detect
+   - name: Ending play if still wsus is not detected
+     meta: end_host
+     when: wsus_detect.rc != 0
+  rescue:
+   - name: Update error tracker file
+     lineinfile:
+     path: "{{ wsus_error_tracker }}"
+     line: >-
+       {{ inventory_hostname }}, "Failed to reauthorize and detect WSUS console"
+     delegate_to: localhost
+     become: false
+
+   - name: End play
+     meta: end_host
+
+   - name: sleep for 60 seconds and then continue with further patching installation.....
+     wait_for: timeout=60
+     delegate_to: localhost
+
+   - name: Running Wsus jobs
+     include: ../../wus_job.yml
+     when: wsus_detect.rc == 0

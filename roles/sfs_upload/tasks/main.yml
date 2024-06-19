@@ -1,0 +1,35 @@
+---
+# ******************************************************************************
+# Role provides a wrapper for data upload via Tower to SFS.
+#
+# Should be run ONLY in a play on single host "localhost" (Ansible Tower host).
+# ******************************************************************************
+#
+### INPUT VARIABLES ###
+# sfs_upload_stage: Defines the stage of the wrapper to be executed.
+#             "prepare" = prepare temporary folder for data on Tower host;
+#             "upload" = upload data to SFS, then remove folder&data on Tower
+#             Default = "prepare"
+# api_auth_by: (password|token) Defines an authentication method to use when
+#             accessing Tower and SFS APIs via HTTPS
+#             Default = "password"
+# unpack_on_sfs: Explicitly define if uploaded compressed data should be
+#             unpacked by SFS upon upload and stored in SFS vault in original
+#             uncompressed state. By default this parameter is undefined and
+#             upload will use SFS server generic configuration.
+# output_dir: Folder (full path) for all data of particular type on Tower.
+#             Default = "/tmp/gts-ansible/generic"
+# upload_url: URL of the SFS server/folder to upload data to.
+#             Default = "https://secure-file-service.cloudapps.pt.ibm.com/files"
+# merge_results: false
+# upload_results: true
+#
+### STAGE "prepare" ###
+- name: Prepare for data upload from Tower to SFS
+  include_tasks: prepare.yml
+  when: sfs_upload_stage == "prepare"
+
+### STAGE "upload" ###
+- name: Upload data from Tower to SFS
+  include_tasks: upload.yml
+  when: sfs_upload_stage == "upload"

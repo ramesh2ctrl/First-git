@@ -1,0 +1,161 @@
+---
+# tasks file for Ansible-Role-WSUS-Scan
+# Block to run WSUS scan run
+- name: Validate Input Parameters
+  block:
+    - name: Validate Input Parameters
+      set_fact:
+        wsusserver: "{{ wsusserver }}"
+        wsusport: "{{ wsusport }}"
+        wsustargetgroup: "{{ wsustargetgroup }}"
+        resultfolder: "{{ resultfolder  }}"
+        resultziplocation: "{{ resultziplocation }}"
+        installationstates: "{{ installationstates }}"
+        changeid: "{{ changeid }}"
+      register: facts_check
+      failed_when: (wsusserver|length == 0) or (wsustargetgroup|length == 0) or (resultfolder|length == 0) or
+                   (resultziplocation|length == 0) or (installationstates|length == 0)
+
+  rescue:
+    - name: Set facts for run
+      set_fact:
+        wsus_scan_run: false
+        wsus_scan_copy: false
+
+    - name: Validate Input Parameters
+      include_role:
+        name: returncode
+      vars:
+        rc_support: "account"
+        rc_group: "misconfiguration"
+        rc_number: 201
+        rc_message: "Input parameters missing"
+
+    - name: print fail msg
+      set_fact:
+        exec_message: |
+          - "WSUS Windows Patching Error"
+          - "{{ facts_check }}"
+          - "Input parameters is missing. Refer to the logfile for more details"
+
+- name: Block for WSUS server scan when connection is normal
+  block:
+    - name: Run WSUS server scan - Normal
+      wsus_scan:
+        wsusserver: "{{ wsusserver }}"
+        wsusport: "{{ wsusport }}"
+        wsustargetgroup: "{{ wsustargetgroup }}"
+        resultfolder: "{{ resultfolder  }}"
+        resultziplocation: "{{ resultziplocation }}"
+        installationstates: "{{ installationstates }}"
+        changeid: "{{ changeid }}"
+      register: output
+
+    - name: display the result
+      debug:
+        msg: "{{ output.result }}"
+
+  rescue:
+    - name: Set facts for run
+      set_fact:
+        wsus_scan_run: false
+        wsus_scan_copy: false
+
+    - name: Returncode for WSUS server scan run
+      include_role:
+        name: returncode
+      vars:
+        rc_support: "account"
+        rc_group: "service_issue"
+        rc_number: 202
+        rc_message: "Script is executed with error for normal scan"
+
+    - name: print fail msg
+      set_fact:
+        exec_message: |
+          - "WSUS Windows Patching Error"
+          - "{{ output }}"
+          - "Script is executed with error. Refer to the logfile for more details"
+
+  when:
+    - secureconnection == 'normal'
+    - wsus_scan_run | bool
+
+# Block to run WSUS secure scan run
+- name: Block for return code for WSUS server secure Scan when connection is secure
+  block:
+    - name: Run WSUS server scan - Secure
+      wsus_scan_secure:
+        wsusserver: "{{ wsusserver }}"
+        wsusport: "{{ wsusport }}"
+        wsustargetgroup: "{{ wsustargetgroup }}"
+        resultfolder: "{{ resultfolder  }}"
+        resultziplocation: "{{ resultziplocation }}"
+        installationstates: "{{ installationstates }}"
+        changeid: "{{ changeid }}"
+      register: output_secure
+
+    - name: display the secure result
+      debug:
+        msg: "{{ output_secure }}"
+
+  rescue:
+    - name: Set facts for run
+      set_fact:
+        wsus_scan_copy: false
+
+    - name: Returncode for WSUS server secure scan run
+      include_role:
+        name: returncode
+      vars:
+        rc_support: "account"
+        rc_group: "service_issue"
+        rc_number: 203
+        rc_message: "Script is executed with error for secure scan"
+
+    - name: print fail msg
+      set_fact:
+        exec_message: |
+          - "WSUS Windows Patching Error"
+          - "{{ output_secure }}"
+          - "script is executed with error. Refer to the logfile for more details"
+
+  when:
+    - secureconnection | bool
+    - wsus_scan_run | bool
+# Block to copy result file
+- name: Block for copy result
+  block:
+    - name: Copy result file from the endpoint to local machine
+      fetch:
+        src: "{{ resultziplocation }}"
+        dest: "{{ dir }}/"
+        flat: true
+      register: fetch_output
+
+    - name: successful execution of WSUS scan role
+      include_role:
+        name: returncode
+      vars:
+        rc_success: true
+        rc_message: "Execution of WSUS scan role completed."
+
+  rescue:
+    - name: Returncode for copy result
+      include_role:
+        name: returncode
+      vars:
+        rc_support: "account"
+        rc_group: "misconfiguration"
+        rc_number: 204
+        rc_message: "Copy file from endpoint to tower failed"
+
+    - name: print fail msg
+      set_fact:
+        exec_message: |
+          - "WSUS Windows Patching Error"
+          - "file not found. Refer to the logfile for more details"
+
+  when:
+    - (output is defined) or (output_secure is defined)
+    - wsus_scan_copy | bool

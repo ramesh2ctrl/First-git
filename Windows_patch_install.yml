@@ -1,0 +1,263 @@
+---
+- name: Job for Windows updates, pre-checks, reboot and post checks
+  hosts: localhost
+  connection: local
+  strategy: free
+  gather_facts: false
+  ignore_unreachable: true
+  become: false
+
+# **** Prepare SFS ****
+- name: SFS *Prepare execution-generic environment*
+  tags: sfs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Prepare for upload to SFS
+      include_role:
+        name: sfs_upload
+      vars:
+        sfs_upload_stage: "prepare"
+        output_dir: "{{ results_dir_base |
+          default('/tmp/gts-ansible/patchscan') }}"
+
+# **** Setting Socket tunnel ****
+- name: Role ensures that the socks tunnel is setup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - include_role:
+        name: event-socks-tunnel
+      vars:
+#       account_code: "{{ hostvars['localhost']['org'] }}"
+#       trans_num: "{{ tower_job_id }}"
+        acc_id: "{{ blueid_shortcode }}"
+        transaction_id: "{{ tower_job_id }}"
+#        acc_id: "{{ hostvars['localhost']['org'] }}"
+#        transaction_id: "{{ tower_job_id }}"
+      when: jh1_ip is defined  # only if endpoint is behind a jumphost
+
+- hosts: all
+  gather_facts: true
+  strategy: free
+  ignore_unreachable: true
+  vars:
+    - account_code: "{{ blueid_shortcode }}"
+    - trans_num: "{{ tower_job_id }}"
+    - acc_id: "{{ blueid_shortcode }}"
+    - transaction_id: "{{ tower_job_id }}"
+    - supported_family: "{{ ansible_os_family == 'Windows'}}"
+    - supported_version: "{{('2019' in ansible_os_name) or ('2016' in ansible_os_name) or ('2012' in ansible_os_name) or ('2008' in ansible_os_name)}}"
+    - dir: "{{ hostvars['localhost'].base_dir }}"
+    - wsus_error_tracker: "{{ dir }}/wsus_error_tracker.csv"
+
+  pre_tasks:
+    - setup:
+        gather_subset:
+          - '!all'
+    - name: ' Verify OS Family,Windows Version...'
+      fail:
+        msg: "This WSUS setting can NOT be run as {{ ansible_distribution }} {{ ansible_distribution_major_version }} is not supported."
+      when: (supported_family|bool and not supported_version|bool)
+      register: supported_os
+
+    - block:
+        - name: "Initialize file output - wsus_error_tracker"
+          lineinfile:
+            path: "{{ wsus_error_tracker }}"
+            line: |
+              "Servername,Error Message"
+            create: true
+          delegate_to: localhost
+
+        - name: Remove old temp folder
+          win_file:
+            state: absent
+            path: C:\windows\temp\WSUSPatch
+      rescue:
+        - name: Update error tracker file
+          lineinfile:
+            path: "{{ wsus_error_tracker }}"
+            line: |
+              "{{ inventory_hostname }}, Failed to remove old temp folder"
+          delegate_to: localhost
+          become: false
+
+        - name: End play
+          meta: end_host
+
+    - block:
+        - name: Creating temporary Folders
+          win_file:
+            state: directory
+            path: c:\windows\temp\WSUSPatch
+      rescue:
+        - name: Update error tracker file
+          lineinfile:
+            path: "{{ wsus_error_tracker }}"
+            line: |
+              "{{ inventory_hostname }}, Unable to create temporary folders"
+          delegate_to: localhost
+          become: false
+
+        - name: End play
+          meta: end_host
+    - block:
+        - name: Obtain information about a registry key property
+          win_reg_stat:
+            path: HKLM:\Software\\policies\\microsoft\\windows\WindowsUpdate
+            name: WUServer
+          register: Wsusreg
+      rescue:
+        - name: Update error tracker file
+          lineinfile:
+            path: "{{ wsus_error_tracker }}"
+            line: |
+              "{{ inventory_hostname }}, unable to fetch the registry key info"
+          delegate_to: localhost
+          become: false
+
+        - name: End play
+          meta: end_host
+
+    - block:
+        - name: WSUS IP address
+          debug:
+            var: Wsusreg
+
+        - name: setting WSUS to {{wsus_server}}
+          win_regedit:
+            path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate
+            name: WUServer
+            data: "{{wsus_server}}"
+            type: string
+          when: Wsusreg.value  != wsus_server
+          ignore_errors: true
+      rescue:
+        - name: Update error tracker file
+          lineinfile:
+            path: "{{ wsus_error_tracker }}"
+            line: |
+              "{{ inventory_hostname }}, unable to set the registry key value for WSUS"
+          delegate_to: localhost
+          become: false
+
+        - name: End play
+          meta: end_host
+
+    - name: Checking C drive space.
+      win_shell: |
+       $c=(Get-WMIObject Win32_LogicalDisk  | Where-Object{$_.DriveType -eq 3 -and $_.Name -eq 'C:'}  |Select-Object @{n='FreeSpace';e={"{0:n2}" -f ($_.freespace/1gb)}}).FreeSpace | ConvertTo-JSON
+       $c
+      register: spaceC
+
+    - name: storing into facts
+      set_fact:
+        cspaces: "{{spaceC.stdout | from_json}}"
+
+    - name: C drive space is.
+      debug:
+        var: cspaces
+
+#     - block:
+#        - name: Remove 90 days old security logs from C drive
+#          win_shell: |
+#            $limit = (Get-Date).AddDays(-90)
+#            Get-ChildItem -Path "C:\Windows\System32\winevt\Logs\Archive-Security*" -Recurse -Force | Where-Object { !$_.PSIsContainer -and $_.CreationTime -lt $limit } | Remove-Item -Force
+#          register: deleted_files
+
+#        - name: Checking C drive space again after file deletion.
+#          win_shell: |
+#            $c=(Get-WMIObject Win32_LogicalDisk  | Where-Object{$_.DriveType -eq 3 -and $_.Name -eq 'C:'}  |Select-Object @{n='FreeSpace';e={"{0:n2}" -f ($_.freespace/1gb)}}).FreeSpace | ConvertTo-JSON
+#            $c
+#          register: spaceC
+
+#        - name: storing into facts
+#          set_fact:
+#            cspaces: "{{spaceC.stdout | from_json}}"
+
+#        - name: C drive space is after file deletion.
+#          debug:
+#            var: cspaces
+#       when: cspaces|int <= 5
+
+    - block:
+        - name: Update error tracker file
+          lineinfile:
+            path: "{{ wsus_error_tracker }}"
+            line: |
+              "{{ inventory_hostname }}, C Drive space is lesser than 5GB"
+          delegate_to: localhost
+          become: false
+
+        - name: End play
+          meta: end_host
+      when: cspaces|int <= 5
+
+    - block:
+        - name: Installing windows Patches
+          win_updates:
+            category_names:
+              - SecurityUpdates
+              - CriticalUpdates
+              - UpdateRollups
+              - DefinitionUpdates
+              - Updates
+              - UpdateRollups
+              - ServicePacks
+              - FeaturePacks
+            state: installed
+            reboot: no
+            log_path: c:\windows\temp\WSUSPatch\firstattempt.txt
+          async: 9000
+          poll: 30
+          register: wsusupdates
+          become: true
+          become_method: runas
+          become_user: SYSTEM
+#           failed_when: >
+#            (" Failed to download update" in wsusupdates.msg) or
+#            (" Failed to search for updates" in wsusupdates.msg) or
+#            (found_update_count >= 1 and installed_update_count ==0)
+      rescue:
+        - name: calling Wsus Troubleshooting jobs
+          include_role:
+            name: roles/WSUS-Failed-Jobs
+  tasks:
+    - name: Debuging WsusUpdates logs
+      debug:
+        var: wsusupdates
+    - name: Debuging update2  logs
+      debug:
+        var: updates2
+      when: updates2 is defined
+    - name: Calling Pre checks as server require restart
+      include_role:
+        name: roles/PreChecks
+      when: wsusupdates is defined and wsusupdates.reboot_required is defined and wsusupdates.reboot_required |bool and wsusupdates.failed == false and  reboot|bool  or  updates2 is defined and updates2.reboot_required |bool and reboot |bool
+      #tags: wsus-job
+  post_tasks:
+    - name: Calling Post Checks after restart
+      include_role:
+        name: roles/PostChecks
+     # tags: wsus-job
+      when: wsusupdates is defined and wsusupdates.reboot_required is defined and wsusupdates.reboot_required |bool and wsusupdates.failed == false and reboot|bool   or  updates2 is defined and updates2.reboot_required |bool and  reboot |bool
+
+- name: Capture and Display Error Log Summary
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    - dir: "{{ hostvars['localhost'].base_dir }}"
+    - wsus_error_tracker: "{{ dir }}/wsus_error_tracker.csv"
+  tasks:
+    - name: "capture wsus_error_tracker data"
+      shell: cat "{{ wsus_error_tracker }}"
+      become: false
+      register: error_log_summary
+
+    - name: "print error log summary"
+      debug:
+        msg: "{{ error_log_summary }}"

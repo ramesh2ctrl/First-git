@@ -1,0 +1,53 @@
+---
+- name: Checking uptime of the server
+  win_shell: |
+    $today = get-date
+    $bootime=Get-WmiObject win32_operatingsystem  | Select @{N="LastBootUptime";EXPRESSION={$_.ConverttoDateTime($_.lastbootuptime)}}
+    $uptime=$today -$bootime.LastBootUpTime | ConvertTo-Json
+    $uptime
+  register: upt
+- name: storing into facts
+  set_fact:
+    uptime: "{{upt.stdout | from_json|json_query(up)}}"
+  vars:
+    up: "[Days,Hours,Minutes]"
+- name: Server uptime is
+  debug:
+    msg: "{{uptime[0]}} Days {{uptime[1]}} Hours {{uptime[2]}} Minutes "
+- name: running tasks
+  block:
+    - name: Checking services with ALL started services before restart
+      win_shell: |
+        $Bfr_Rbt = Import-Clixml -Path "c:\windows\temp\WSUSPatch\$env:Computername-before.xml"
+        Get-WmiObject  -Class win32_service | where {$_.state -ne 'Running' } | Export-Clixml -Path "c:\windows\temp\WSUSPatch\$env:Computername-after.xml" -Force
+        $Aft_Rbt = Import-Clixml -Path "c:\windows\temp\WSUSPatch\$env:Computername-after.xml"
+        $serv1 = Compare-Object $Bfr_Rbt $Aft_Rbt -Property Name,DisplayName,State  | where-object {$_.sideindicator  -eq '=>'}  |ConvertTO-JSON
+        $serv1
+      register: srv1
+    - block:
+        - name: List of services which are stopped state after restart
+          debug:
+            var: srv1.stdout
+        - name: List of services which are stopped  after restart
+          set_fact:
+            Srv2: "{{srv1.stdout | from_json}}"
+        - name: Starting the service
+          win_service:
+            name: "{{item.Name}}"
+            state: started
+            force_dependent_services: yes
+          ignore_errors: yes
+          # when: item.State == stopped
+          with_items: "{{Srv2}}"
+          when: uptime[1] | int <=23
+      rescue:
+        - name: Update error tracker file
+          lineinfile:
+            path: "{{ wsus_error_tracker }}"
+            line: >-
+             {{ inventory_hostname }}, "Failed to bring the services up after restart"
+          delegate_to: localhost
+          become: false
+
+        - name: End play
+          meta: end_host

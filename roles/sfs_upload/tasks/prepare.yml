@@ -1,0 +1,85 @@
+---
+- name: Block for process return code
+  block:
+    - name: Define command and parameters for Tower API access
+      set_fact:
+        curl_cmd: 'curl -k -s -S -H "Content-type: application/json" -H
+          "Accept: application/json"{% if api_auth_by == "password" %} -u
+          "$TOWER_USERNAME:$TOWER_PASSWORD"{% elif api_auth_by == "token" %} -H
+          "Authorization: Bearer $TOWER_PASSWORD"{% endif %}'
+
+    # Not using URI module as it logs HTTP headers in plain test, and token-based
+    # auth requires token to be provided in "Authorization" header
+
+    - name: Get current Inventory from Tower
+      shell: '{{ curl_cmd }}
+        "$TOWER_HOST/api/v2/inventories/$INVENTORY_ID/"'  # noqa 301 305
+      args:
+        warn: false
+      register: inventory
+      changed_when: false
+      failed_when: inventory.failed or inventory.rc != 0 or
+        (inventory.stdout | from_json).summary_fields is undefined
+
+    - name: Get current Job template from Tower
+      shell: '{{ curl_cmd }} "$TOWER_HOST/api/v2/job_templates/{{
+        tower_job_template_id }}/"'  # noqa 301 305
+      args:
+        warn: false
+      register: template
+      changed_when: false
+      failed_when: template.failed or template.rc != 0 or
+        (template.stdout | from_json).summary_fields is undefined
+
+    - name: Register reusable run-time facts
+      set_fact:
+        api_auth_by: "{{ api_auth_by }}"
+        output_dir: "{{ output_dir }}"
+        timestamp: "{{ '%Y%m%d_%H%M%S' | strftime }}"
+        org: "{{ (inventory.stdout | from_json).summary_fields.organization.name }}"
+        project: "{{ (template.stdout | from_json).summary_fields.project.name }}"
+
+    - name: Set full path to temporary folder for data on Tower
+      set_fact:
+        base_dir: "{{ output_dir }}/{{ org }}/{{ project }}/job{{ tower_job_id }}_\
+          time{{ timestamp }}"
+
+    - name: Create a temporary folder for data on Tower
+      file:
+        path: "{{ base_dir }}"
+        state: directory
+        mode: '0755'
+      register: folder_creation
+
+  rescue:
+    - name: Get current Inventory from Tower returncode
+      include_role:
+        name: returncode
+      vars:
+        rc_number: 101
+        rc_support: "account"
+        rc_group: "misconfiguration"
+        rc_message: "Getting current Inventory from Tower failed for SFS prepare"
+      when: inventory.failed or inventory.rc != 0 or
+        (inventory.stdout | from_json).summary_fields is undefined
+
+    - name: Job Template returncode
+      include_role:
+        name: returncode
+      vars:
+        rc_number: 102
+        rc_support: "account"
+        rc_group: "misconfiguration"
+        rc_message: "Error getting template details for SFS prepare"
+      when: template.failed or template.rc != 0 or
+        (template.stdout | from_json).summary_fields is undefined
+
+    - name: Temporary folder creation on tower returncode
+      include_role:
+        name: returncode
+      vars:
+        rc_number: 103
+        rc_support: "account"
+        rc_group: "misconfiguration"
+        rc_message: "Temporary folder creation failed on Tower for SFS prepare"
+      when: folder_creation.failed

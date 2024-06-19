@@ -1,0 +1,13 @@
+---
+wsusserver: server1
+wsusport: 8530
+wsustargetgroup: "All Computers"
+resultfolder: "C:\\Reports"
+resultziplocation: "C:\\ziplocation\\report.zip"
+installationstates: "NotInstalled, Installed, NotApplicable"
+secureconnection: normal
+changeid: ""
+
+wsus_validate_input: true
+wsus_scan_run: true
+wsus_scan_copy: true

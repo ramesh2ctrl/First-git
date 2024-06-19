@@ -1,0 +1,14 @@
+
+PLAY [windows disk space playbook] *********************************************
+
+TASK [Ansible-Role-WSUS-Scan : Run WSUS server scan] ***************************
+ok: [server1]
+
+TASK [Ansible-Role-WSUS-Scan : display the result] *****************************
+ok: [server1] => {
+    "msg": "Script Executed Successfully"
+}
+
+PLAY RECAP *********************************************************************
+server1                    : ok=2    changed=0    unreachable=0    failed=0   
+

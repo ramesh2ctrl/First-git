@@ -1,0 +1,22 @@
+---
+- block:
+    - name: Rebooting Windows
+      win_reboot:
+        test_command: 'exit (Get-Service -Name Netlogon).Status -ne "Running"'
+        reboot_timeout: 1500
+      register: rest
+    - debug:
+        var: rest
+  rescue:
+    - name: "Update error tracker file"
+      lineinfile:
+        path: "{{ wsus_error_tracker }}"
+        line: |
+          "{{ inventory_hostname }}"
+          "Reboot failure: server did not come up within 25 minutes. Please check manually"
+      delegate_to: localhost
+      become: false
+
+    - name: Reboot is failed
+      debug:
+        msg: "{{ansible_hostname}} server didn't come up within 25 minutes, please check manually"
